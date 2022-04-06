@@ -1,0 +1,858 @@
+---
+title: 'Minería de datos: PEC3 - Clasificación con árboles de decisión'
+author: 'Gerson Villalba Arana'
+date: "Diciembre 2021"
+output:
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+    includes:
+      in_header: 75.584-PEC-header.html
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval=T, echo=T)
+```
+
+
+******
+# Análisis descriptivo y de correlaciones
+******
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(ggcorrplot)){
+    install.packages('ggcorrplot', repos='http://cran.us.r-project.org')
+    library(ggcorrplot)
+}
+```
+
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(skimr)){
+    install.packages('skimr', repos='http://cran.us.r-project.org')
+    library(skimr)
+}
+```
+
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(gmodels)){
+    install.packages('gmodels', repos='http://cran.us.r-project.org')
+    library(gmodels)
+}
+```
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+```
+
+Comenzamos leyendo los datos que nos proporcionan y visualizándolos.
+
+```{r}
+df <- read_csv('credit.csv')
+str(df)
+```
+
+Vemos un análisis un poco más exhaustivo de los datos, separándolos en categóricos y numéricos.
+
+```{r}
+skim(df)
+```
+
+Vemos como no tenemos valores nulos en ninguna de las variables, por lo que no tendremos que realizar ninguna acción adicional en este sentido.
+
+
+En el dataset tenemos tanto datos de tipo numérico como categórico. Pasamos a describirlos a continuación:
+
+* **checking_balance**. Balance de la cuenta cheques del cliente. Variable categórica.
+
+* **months_loan_duration**. Duración del crédito en meses. Variable numérica.
+
+* **credit_history**. Historial de crédito del cliente. Variable categórica.
+
+* **purpose**. Objeto del préstamo. Variable categórica.
+
+* **amount**. Cantidad del préstamo solicitado. Variable numérica.
+
+* **savings_balance**. Balance de la cuenta de ahorro del cliente. Variable categórica.
+
+* **employment_length**. Antiguedad del contrato de trabajo del cliente. Variable categórica.
+
+* **installment_rate**. Plan de pago. Varaiable numérica.
+
+* **personal_status**. Sexo y estado civil. Variable categórica.
+
+* **other_debtors**. Otros deudores. Variable categórica.
+
+* **residence_history**. Número de viviendas registradas.
+
+* **property**. Tipo de propiedad. Variable categórica.
+
+* **age**. Edad del solicitante del préstamo. Varaiable numérica.
+
+* **installment_plan**. Plan de cuotas. Variable categórica.
+
+* **housing**. Tipo de vivienda del solicitante. Variable categórica.
+
+* **existing_credits**. Número de créditos que tiene el solicitante. Variable numérica.
+
+* **default**. Variable objetivo de análisis que indica si se produce finalmente un impago en el préstamo o no.
+
+* **dependents**. Número de personas dependientes del solicitante. Variable numérica.
+
+* **telephone**. Variable que indica si el solicitante tiene o no teléfono. Variable categórica.
+
+* **foreign_worker**. Variable que indica si el trabajador es o no extranjero. Variable categórica.
+
+* **job**. Categoría laboral del cliente. Variable categórica.
+
+
+Cambiamos el tipo de las variables caregóricas de tipo *char* a tipo *factor*.
+
+```{r}
+df <- df %>% mutate_if(is.character, as.factor)
+```
+
+Vemos además como la variable clase objetivo toma los valores 1 (no impago) o 2 (impago). Cambiamos esta etiqueta a tipo booleano como clase TRUE/FALSE, siendo TRUE -> IMPAGO, FALSE -> NO IMPAGO.
+
+```{r}
+df$default <- df$default - 1
+df$default <- as.logical(df$default)
+str(df)
+```
+
+Vemos el número de muestras que tenemos de cada clase objetivo.
+
+```{r}
+df %>%
+  ggplot(aes(x = default, fill= default))+
+  geom_bar()+
+  theme(legend.position = "none")+
+  geom_text(stat='Count',aes(label=..count..), vjust=2)+
+  labs(x='Impago', y=NULL)
+```
+
+Como podemos observar, el número de muestras de la clase objetivo no está balanceado, ya que tenemos más del doble de muestras de préstamos correctamente devueltos que impagados.
+
+
+
+## Variables numéricas
+
+
+Para describir las variables numericas, en primer lugar, vemos las estadísticas descriptivas básicas de éstas.
+
+```{r}
+df %>% select_if(is.numeric) %>% summary()
+```
+
+Dibujamos un histograma para cada una de las variables numéricas que tenemos en el set de datos.
+
+```{r}
+df %>%
+  select_if(is.numeric) %>%
+  gather(key = 'name', value = 'value') %>%
+  ggplot(aes(x = value)) + 
+  facet_wrap(~name, scales = "free_x", ncol=4) + 
+  geom_histogram(bins = 15, fill = '#27C698')
+```
+
+Pomo podemos observar, entre las variables numéricas las hay que sólamente toman unos pocos valores dicretos, como *dependants*, y otras que tiene un rango amplio de posibles valores, como *amount*.
+
+Representamos las variables numéricas frente a la variable objetivo, para ver su dependencia.
+
+
+```{r}
+df %>%
+  ggplot(aes(x=age, y=default, fill=default))+
+  geom_point(alpha=0.1, size=4)+
+  geom_boxplot(alpha = 0.5)+
+  theme(legend.position = "none")+
+  labs(x='Edad',
+       y='Impago',
+       title='Edad vs. Impago')
+```
+
+
+
+
+```{r}
+df %>%
+  group_by(age) %>%
+  summarise(mean = mean(default)) %>%
+  ggplot(aes(x=age, y=mean))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  labs(x='Edad',
+       y='Porcentaje de impagos',
+       title='Edad vs. porcentaje de impagos')
+```
+
+Vemos ver de ambas gráficas como hay una correlación negativa entre ambas variables, por lo que de forma general los solicitantes de mayor edad tienden a efectuar menos impagos en los préstamos que solicitan.
+
+
+```{r}
+df %>%
+  group_by(months_loan_duration) %>%
+  summarise(mean = mean(default)) %>%
+  ggplot(aes(x=months_loan_duration, y=mean))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  labs(x='Duración del préstamo (meses)',
+       y='Porcentaje de impagos',
+       title='Duración del préstamo vs. porcentaje de impagos')
+```
+
+Podemos ver como hay una clara correlación positiva y bastante fuerte entre el riesgo de impago y el número de meses de duración de un préstamo. A mayor duración del préstamo, más riesgo hay de que este acabe en impago, como podríamos esperar.
+
+
+```{r}
+df %>%
+  ggplot(aes(x=amount, y=default, fill=default))+
+  geom_point(alpha=0.1, size=4)+
+  geom_boxplot(alpha = 0.5)+
+  theme(legend.position = "none")+
+  labs(x='Importe del préstamo',
+       y='Impago',
+       title='Importe vs. Impago')
+```
+
+Vemos como la distribución del importe del préstamo es claramente distinta en los préstamos que han sido devueltos y los que no. Entre los impagados, tanto la mediana como el cuartil 75 son más elevados, lo que indica que los impagos tienden a ser de préstamos de mayor importe, como cabría esperar.
+
+Dibujamos la matriz de correlación entre todas las variables numéricas.
+
+
+```{r}
+df %>% 
+  mutate_if(is.logical, as.numeric) %>%
+  select_if(is.numeric) %>% 
+  cor() %>% 
+  round(2) %>%
+  ggcorrplot(
+    hc.order = TRUE, 
+    type = "lower",
+    outline.color = "gray",
+    ggtheme = ggplot2::theme_classic,
+    colors = c("#6D9EC1", "white", "#E46726"),
+    lab = TRUE)
+```
+
+Como ya hemos visto anteriormente, las variables que indican la duración del préstamo y su cantidad están bastante correladas con la variable objetivo "default". Las variables "age" y "installment rate" también tienen cierta correlación, por lo que las incluiremos en el modelo. Sin embargo, las variables "residence_history", "dependents" y "existing_credits" no tienen apenas correlación con "default", por lo que en principio las descartaremos. Hay que dejar claro que una baja correlación entre variables no implica que no exista relación entre ellas, ya que esta puede ser de tipo no lineal y por lo tanto no ser capturada por la correlación. Sin embargo, con el objetivo de reducir el número de variables del modelo y hacerlo más interpretable, tomamos la decisión de eliminarlas.
+
+
+```{r}
+df <- subset(df, select=-c(residence_history, dependents, existing_credits))
+```
+
+
+Si miramos el resto de correlaciones, destaca la que hay entre las variables *month_load_duration* y *amount*, algo bastante lógico teniendo en cuenta que los préstamos de mayor importe van a tener en general una duración también mayor. Vemos la relación entre ambas variables:
+
+```{r}
+df %>%
+  ggplot(aes(x=amount, y=months_loan_duration, color=default))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  labs(x='Importe del préstamo',
+       y='Duración del préstamo (meses)',
+       title='Importe vs. Duración del préstamo')
+```
+
+
+
+
+## Variables categóricas
+
+A continuación mostramos todas las variables categóricas, con las clases que tienen, el número de muestras que hay de cada una de ellas y el porcentaje que representa sobre el total.
+
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(Hmisc)){
+    install.packages('Hmisc', repos='http://cran.us.r-project.org')
+    library(Hmisc)
+}
+```
+
+
+```{r}
+df %>% select_if(negate(is.numeric)) %>% Hmisc::describe()
+```
+
+
+Mostraremos a continuación de forma gáfica la distribución de las clases de todas las variables categóricas, así como su reparto en la clase objetivo "default".
+
+
+```{r}
+df %>%
+  ggplot(aes(x = checking_balance, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Balance de crédito', y=NULL)
+```
+
+Vemos como pocos con un balance de crédito de ">200 DM" piden un préstamo, algo lógico. En porcentaje, parece que entre los que tienen un balance negativo "<0 DM" existe la mayor proporción de impagos (50% aproximadamente), algo que tampoco sorprende.
+
+
+```{r}
+df %>%
+  ggplot(aes(x = credit_history, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Historial de crédito', y=NULL)
+```
+
+
+```{r}
+df %>%
+  ggplot(aes(x = purpose, fill=default)) + 
+    geom_bar(position='stack') +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x='Objeto del préstamo', y=NULL)
+```
+
+
+Podemos ver cómo los objetos del préstamo más habituales son la compra de coches nuevos, muebles y TVs., y también cómo hay diferencias en el porcentaje de estas clases que devuelven el préstamo.
+
+
+```{r}
+df %>%
+  ggplot(aes(x = savings_balance, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Balance en cuenta de ahorro', y=NULL)
+```
+
+
+```{r}
+df %>%
+  ggplot(aes(x = employment_length, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Antigüedad del contrato de trabajo', y=NULL)
+```
+
+
+```{r}
+df %>%
+  ggplot(aes(x = personal_status, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Sexo y estado civil', y=NULL)
+```
+
+
+```{r}
+df %>%
+  ggplot(aes(x = other_debtors, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Otros deudores', y=NULL)
+```
+
+
+
+```{r}
+df %>%
+  ggplot(aes(x = property, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Propiedad', y=NULL)
+```
+
+
+
+```{r}
+df %>%
+  ggplot(aes(x = installment_plan, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Plan de cuotas', y=NULL)
+```
+
+
+
+```{r}
+df %>%
+  ggplot(aes(x = housing, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Vivienda', y=NULL)
+```
+
+Vemos cómo la mayoría de los solicitantes de préstamos tienen una vivienda en propiedad.
+
+
+```{r}
+df %>%
+  ggplot(aes(x = telephone, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Dispone de teléfono', y=NULL)
+```
+
+
+
+```{r}
+df %>%
+  ggplot(aes(x = foreign_worker, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Trabajador extranjero', y=NULL)
+```
+
+
+
+
+```{r}
+df %>%
+  ggplot(aes(x = job, fill=default)) + 
+    geom_bar(position='stack') +
+    labs(x='Tipo de trabajo', y=NULL)
+```
+
+Vemos ahora la representación del reparto de la variable impago de cada clase de todas las variables categóricas como porcentaje del total de la clase.
+
+
+```{r, warning=FALSE, fig.width=10,fig.height=15}
+df %>%
+  select_if(negate(is.numeric)) %>%
+  gather('name', 'value', -default, factor_key=TRUE) %>%
+  ggplot(aes(x = value, fill=default)) + 
+    geom_bar(position='fill') +
+    facet_wrap(~name, scales = "free_x", ncol=3) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    labs(x=NULL, y=NULL)
+```
+
+Del análisis de las variables que hemos realizado, tomamos la decisión de prescindir de algunas de las variables categóricas que tenemos porque no parecen ser muy representativas a la hora de predecir un impago. Esto ocurre cuando vemos porcentajes de impagos similares entre las diferentes clases de una variable, y de esta manera obtendremos un modelo más sencillo de entrenar y de interpretar. Eliminamos con este criterio las siguientes variables:
+
+* telephone
+
+* job
+
+* personal_status
+
+* installment_plan
+
+* property
+
+
+```{r}
+df <- subset(df, select=-c(telephone,job,personal_status, 
+                           installment_plan, property))
+str(df)
+```
+
+
+
+******
+# Preparación de los datos para el modelo
+******
+
+Fijamos en primer lugar la semilla a utilizar para que podamos obtener resultados repetitivos.
+
+```{r}
+set.seed(42)
+```
+
+Para preparar los datos que meteremos en el modelo, separamos primero las variables de entrada (X) de la clase objetivo (y). Previamente convertimos la variable objetivo a tipo *factor*, ya que los modelos que vamos a utilizar trabajan exclusivamente con la clase objetivo de este tipo y no booleano como teníamos.
+
+```{r}
+df$default <- as.factor(df$default)
+X <- subset(df, select = -default)
+y <- df$default
+```
+
+
+A continuación separaremos todas las muestras de forma aleatoria en dos conjuntos diferentes:
+
+* Conjunto de entrenamiento (_train), en el que tomaremos el 80% de las muestras. Este conjunto lo utilizaremos para entrenar el modelo.
+
+* Conjunto de validación (_test) que contará con el 20% restante y utilizaremos para testear la calidad del modelo.
+
+```{r}
+sample <- sample.int(n = nrow(df), size = floor(.8*nrow(df)), replace = F)
+X_train <- X[sample, ]
+X_test  <- X[-sample, ]
+y_train <- y[sample]
+y_test  <- y[-sample]
+```
+
+
+Comprobamos que ambos sets tienen un porcentaje similar de muestras de cada clase objetivo. Esto es importante para poder realizar un correcto entrenamiento y una correcta validación del modelo, ya que si no puede salir muy sesgado.
+
+
+```{r}
+prop.table(table(y_train))
+```
+
+```{r}
+prop.table(table(y_test))
+```
+
+Vemos como en ambos conjuntos el porcentaje de la clase de impagados es muy similar, de aproximadamente el 70% no impagado y 30% impagados, que es el mismo porcentaje que tenemos en el conjunto total de datos.
+
+
+******
+# Primer árbol de decisión
+******
+
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(C50)){
+    install.packages('C50', repos='http://cran.us.r-project.org')
+    library(C50)
+}
+```
+
+Realizamos el primer modelo de árbol de decision con el algoritmo C50.
+
+```{r}
+model <- C50::C5.0(X_train, y_train, rules=TRUE )
+summary(model)
+```
+
+Vemos como hemos clasificado incorrectamente 128 muestras del conjunto de entrenamiento mal, de un total de 800, lo que equivale a un 16%. Eso quiere decir que el 84% las hemos clasificado correctamente. No parece un número malo, pero hemos de tener en cuenta que esta cifra la obtenemos del conjunto de datos de entrenamiento, por lo que el comportamiento real con datos no vistos anteriormente puede ser muy inferior.
+
+Dibujamos el arbol completo de decisión.
+
+```{r, fig.width=50, fig.height=20}
+model <- C50::C5.0(X_train, y_train)
+plot(model)
+```
+
+
+A pesar de haber reducido el número de variables de entrada al modelo, estas siguen siendo muchas y es complicado visualizar el árbol gráficamente, ya que éste es muy grande y tiene muchas reglas de decisión.
+
+Podemos ver de forma más detallada un ejemplo de una subrama, para ver cómo se forman las reglas y se va dividiendo en más ramas hasta que queda un grupo de muestras, que se etiquetan todas dentro de una de las clases. Si en este grupo final existen muestras de ambas clases, tendremos errores en la clasificación.
+
+```{r}
+plot(model,subtree=24)
+```
+
+
+
+******
+# Explicación de las reglas obtenidas
+******
+
+En el árbol de reglas que hemos obtenido en el paso anterior se nos muestran todas las reglas que definen a qué grupo va cada una de las muestras del set de enterenamiento que tenemos. En este caso, obtenemos un total de 17 reglas:
+
+
+1. Si *checking_balance* pertenece a la clase ">200 DM" o "unknown", se clasifica como FALSE con una validez del 87%.
+
+2. Si *savings_balance* pertenece a las clases "> 1000 DM", "501 - 1000 DM" o "unknown", se clasifica como FALSE con una validez del 84%.
+
+3. Si *months_loan_duration* <= 45 y *other_debtors* pertenece a la clase "guarantor", se clasifica como FALSE con una validez del 81%.
+
+4. Si *months_loan_duration* <= 45 y *other_debtors* pertenece a la clase "none", se clasifica como FALSE con una validez del 71%.
+
+5. Si *checking_balance* pertenece a las clases "< 0 DM" o  "1 - 200 DM", *months_loan_duration* > 16, *purpose* pertenece a la clase "radio/tv", *amount* <= 2337, *savings_balance* pertenece a las clases "< 100 DM" o "101 - 500 DM" y *employment_length* pertenece a las clases "0 - 1 yrs", "1 - 4 yrs" o "unemployed" se clasifica como TRUE con una validez del 93%.
+
+6. Si *checking_balance* pertenece a las clases "< 0 DM" o  "1 - 200 DM", *credit_history* es "critical" o "repaid",  *amount* > 8072, *savings_balance* pertenece a las clases "< 100 DM" o "101 - 500 DM" y *other_debtors* pertenece a la clase "none", se clasifica como TRUE con una validez del 89%.
+
+7. Si *checking_balance* pertenece a la clase "< 0 DM", *purpose* es "education" y *savings_balance* pertenece a la clase "< 100 DM" , se clasifica como TRUE con una validez del 89%.
+
+8. Si *checking_balance* pertenece a las clases "< 0 DM" o  "1 - 200 DM", *months_loan_duration* >16,  *credit_history* es "critical" o "repaid", *purpose* pertenece a la clase "radio/tv", *employment_length* pertenece a las clases "0 - 1 yrs" o "1 - 4 yrs" y *age* >32, se clasifica como TRUE con una validez del 88%.
+
+9. Si *checking_balance* pertenece a las clases "< 0 DM" o  "1 - 200 DM", *months_loan_duration* >16, *purpose* pertenece a la clase "business", *savings_balance* es "< 100 DM" y *employment_length* pertenece a las clases "> 7 yrs" o "1 - 4 yrs", se clasifica como TRUE con una validez del 87%.
+
+10. Si *checking_balance* pertenece a las clases "< 0 DM" o  "1 - 200 DM", *months_loan_duration* >16, *purpose* pertenece a la clase "business", *savings_balance* es "< 100 DM" y *employment_length* pertenece a las clases "> 7 yrs" o "1 - 4 yrs", se clasifica como TRUE con una validez del 87%.
+
+El resto de las reglas se pueden extraer de la misma forma del apartado anterior. Como tenemos bastante variables, es complicado establecer unas reglas muy claras, pero en general se puede decir que serán clasificados mayoritariamente como TRUE aquellos préstamos con bajo *checking_balance*, bajo *savings_balance* y alto *months_loan_duration*. Dicho de otro modo, clientes que disponen de poca capacidad económica y piden grandes préstamos. Nada que resulte sorprendente.
+
+En el informe que hemos obtenido anteriormente del árbol de decisión, también nos da información sobre las variables más utilizadas para la toma de decisiones. Estas son: 
+
+
+	 91.13%	months_loan_duration
+	 91.13%	other_debtors
+	 89.25%	checking_balance
+	 71.38%	savings_balance
+	 14.75%	credit_history
+	 14.75%	purpose
+	  5.50%	amount
+	  3.63%	employment_length
+	  0.75%	age
+
+
+******
+# Análisis de la bondad de ajuste sobre el conjunto de test y matriz de confusión
+******
+
+Hemos obtenido en el paso anterior un error del 16% en la clasificación de muestras, pero dentro del conjunto de entrenamiento. Esta no es en realidad una manera correcta de evaluar el comportamiento del modelo, pues es muy habitual (y todavía más en árboles de decisión) que tengamos un modelo que sufra de **overfitting**; esto es, que haya aprendido muy bien las peculiaridades del conjunto de datos de entrenamiento, pero que su rendimiento sea mucho peor si se enfrenta a datos no conocidos hasta el momento. Es precisamente por este hecho que separamos un conjunto de datos de test para evaluar el modelo con datos no vistos.
+
+```{r}
+y_predict <- predict( model, X_test, type="class" )
+print(sprintf("La exactitud del árbol es: %.2f %%",
+              100*sum(y_predict == y_test) / length(y_predict)))
+```
+
+Como podemos ver, la exactitud de clasificación en el conjunto de muestras de evaluación es del 73% que, sin ser un dato malo, dista del 84% obtenido en el conjunto de muestras de entrenamiento. Podemos decir por lo tanto que efectivamente nuestro modelo sufre de **overfitting** al tener una exactitud mucho mayor en el conjunto de entrenamiento que en el de test.
+
+Como la clasificación tiene muy pocas clases (sólo dos) podemos obtener la matriz de confusión, que nos sirve para saber cuándo nuestro modelo ha confundido una clase con otra.
+
+```{r}
+CrossTable(y_test, y_predict, prop.chisq  = FALSE, prop.c = FALSE, 
+           prop.r =FALSE, dnn = c('Reality', 'Prediction'))
+```
+
+En la matriz de confusión podemos observar varias cosas:
+
+* Pese a que la exactitud del modelo no es muy mala, vemos cómo de las 58 muestras que tenemos de la clase positiva, apenas la mitad (30) son clasificadas correctamente como éstas. Dicho de otra forma, la mitad de los clientes que acaban no pagando sus préstamos, se nos colarán como clientes "buenos". Este es un error muy grave para un banco, pues conlleva una pérdida económica muy importante.
+
+* De los 56 clientes a los que se clasificará como "malos" o posibles morosos, poco más de la mitad (30) realmente lo son, por lo que podremos denegar muchos préstamos a clientes que realmente vayan a pagar sus préstamos.
+
+Estas dos variables en realidad se ven representadas si calculamos la precisión (precision) y sensibilidad (recall) del modelo.
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(caret)){
+    install.packages('caret', repos='http://cran.us.r-project.org')
+    library(caret)
+}
+```
+
+
+```{r}
+confusionMatrix(y_predict, y_test, mode = "prec_recall", positive='TRUE')
+```
+
+En la tabla anterior vemos un mejor resumen de los parámetros de medida de calidad del modelo. Como habíamos deducido de la matriz de confusión, tanto *precision* como *recall* son muy bajos, de poco más del 50%, pese a tener el modelo una exactitud del 73%. Esto es debido a que el set de datos que tenemos no tiene las clases balanceadas, sino que tiene un 70% de muestras de la clase "FALSE", porcentaje que se refleja también en el set de test. Por lo tanto, podríamos tener un estimador que nos devolviese siempre la clase FALSE y tendríamos un modelo con una exactitud del 70%, poco menos que el que hemos conseguido. Por lo tanto, aunque el 73% de exactitud podía parecer prometedor, en realidad no lo es tanto.
+
+Podemos ver como el *F1-score*, medida derivada de *precision* y *recall*, es también muy baja.
+
+Por último, vamos a utilizar una última métrica que es la curva ROC y su derivada AUC. 
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(pROC)){
+    install.packages('pROC', repos='http://cran.us.r-project.org')
+    library(pROC)
+}
+```
+
+Para poder evaluar esta métrica, como tenemos que variar el umbral donde colocamos la división POSITIVO/NEGATIVO, necesitamos que el modelo nos devueva las probabilidades de que la muestra pertenezca a una clase determinada, y no sólamente la clase asignada. Obtenemos estas probabilidades y dibujamos la curva.
+
+
+```{r}
+y_predict_prob <- predict(model, X_test, type='prob')
+par(pty='s')
+roc_p <- roc(y_test, y_predict_prob[,2], legacy_axes=TRUE, percent = TRUE, plot = TRUE, 
+             asp =NA, col='red', lwd=3, print.auc = TRUE,
+             xlab = 'Porcentaje falsos positivos', 
+             ylab = 'Porcentaje verdaderos postivios', 
+             xlim = c(100, 0))
+```
+
+La curva ROC muestra en una gráfica los porcentajes de verdaderos positivos frente al porcentaje de falsos positivos. Esta curva siempre va a estar por encima de la línea identidad y=x, y el modelo tendrá mejor comportamiento cuanto más lejos esté de esta línea, o lo que es lo mismo, más cerca esté la curva del borde superior izquierdo. Con esta representación podemos ver cómo podemos seleccionar en qué punto queremos estar de la curva asignando un umbral de separación distinto para la clasificación como positivo/negativo a la salida del modelo. Podemos tener una tasa de verdaderos positivos todo lo alta que queramos, siempre que estemos dispuesto a sacrificar el porcentaje de falsos positivos, y lo contrario. Cuanto más cerca esté la curva del borde superior izquierdo, menos porcentaje de falsos positivos tendremos que sacrificar para tener un alto grado de verdaderos positivos y lo contrario, y por lo tanto obtendremos un clasificador de mejor calidad.
+
+Derivada de esta medida de calidad, podemos obtener otra numérica más sencilla: el área que tenemos debajo de esta curva, denominado AUC (*Area Under Curve*). Como hemos dicho, siempre la curva ROC va a estar por encima de y=x, por lo que el valor mínimo que tenemos para AUC es de 0.5 (50%) y el máximo será de 1. Vemos como para este primer clasificador el AUC que hemos obtenido es de 0.714.
+
+
+
+******
+# Modelos complementarios
+******
+
+## C50 con boosting
+
+El primero de los modelos alternativos que vamos a probar es el mismo modelo C50 pero utilizando la técnica de boosting, que consiste en entrenar iterativamente modelos para favorecer a las muestras que has sido clasificadas erróneamente en iteraciones anteriores. Esta técnica suele mejorar el comportamiento de los modelos reduciendo el **overfitting**, a costa de un mayor coste computacional.
+
+```{r}
+modelo.boost <- C50::C5.0(X_train, y_train, trials = 30)
+```
+
+
+```{r}
+y_predict.boost <- predict( modelo.boost, X_test, type="class" )
+print(sprintf("La exactitud del árbol es: %.2f %%", 
+              100*sum(y_predict.boost == y_test) / length(y_predict.boost)))
+```
+
+Realizamos el mismo análisis de métricas que hemos hecho en el caso anterior.
+
+```{r}
+confusionMatrix(y_predict.boost, y_test, mode = "prec_recall", positive='TRUE')
+```
+
+Vemos como no sólamente el la exactitud (*accuracy*) del modelo ha mejorado, sino que también lo han hecho la precisión (*precision*) y sensibilidad (*recall*), y, derivados de ellos, el *F1-score*. Vemos que a pesar de haber mejorado considerablemente, todavía no son números que llamen especialmente la atención.
+
+
+```{r}
+y_predict_prob.boost <- predict(modelo.boost, X_test, type='prob')
+par(pty='s')
+roc_p <- roc(y_test, y_predict_prob.boost[,2], legacy_axes=TRUE, percent = TRUE, plot = TRUE, 
+             asp =NA, col='red', lwd=3, print.auc = TRUE,
+             xlab = 'Porcentaje falsos positivos', 
+             ylab = 'Porcentaje verdaderos postivios', 
+             xlim = c(100, 0))
+```
+
+La curva ROC vemos como ahora se encuentra más cerca del borde de arriba a la izquierda y el AUC ha mejorado considerablemente hasta el 0.764 desde el 0.714 inicial.
+
+
+## Random forest
+
+Random forest es otro método basado en árboles de decisión que consiste en la creación de múltiples árboles tomando de forma aleatoria algunas de las variables de entrada y descartando el resto. De esta forma se obtienen múltiples árboles de decisión más sencillos (y por lo tanto fáciles de entrenar) y de cada uno de ellos se obtendrá una clase objetivo predicha. La clase predicha final se establecerá por votación entre todos los árboles, de forma que la que más votos obtenga será la ganadora.
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+if(!require(randomForest)){
+    install.packages('randomForest', repos='http://cran.us.r-project.org')
+    library(randomForest)
+}
+```
+
+
+```{r}
+set.seed(42)
+modelo.rf <- randomForest(x=X_train, y=y_train, importance=TRUE, ntree=50)
+```
+
+Realizamos el mismo análisis de medidas de calidad del modelo que en los casos anteriores.
+
+```{r}
+y_predict.rf <- predict(modelo.rf, X_test, type='class')
+confusionMatrix(y_predict.rf, y_test, mode = "prec_recall", positive='TRUE')
+```
+
+Vemos como en este caso ya hemos mejorado la exactitud del 73% inicial al 79%, una mejora sustanacial. Sin embargo, si miramos la matriz de confusión o los valores de precision/recall nos fijamos en que hemos mejorado especialmente la precisión del modelo, que ahora es del 70% (frente al 53% inicial). Esto quiere decir que más de dos tercios de los clientes que categoricemos como "malos" realmente acaban no pagando los préstamos. Sin embargo, la sensibilidad es muy mala, de sólo el 48%, por lo que más de la mitad de los clientes que acaban siendo morosos los catalogamos como clientes "buenos" a los que les concederemos el préstamo.
+
+
+```{r}
+y_predict_prob.rf <- predict(modelo.rf, X_test, type='prob')
+par(pty='s')
+roc_p <- roc(y_test, y_predict_prob.rf[,2], legacy_axes=TRUE, percent = TRUE, plot = TRUE, 
+             asp =NA, col='red', lwd=3, print.auc = TRUE,
+             xlab = 'Porcentaje falsos positivos', 
+             ylab = 'Porcentaje verdaderos postivios', 
+             xlim = c(100, 0))
+```
+
+Curiosamente, pese a que la forma de la curva cambia, el valor de AUC es exactamente el mismo que en el caso anterior con boosting, con un 0.764.
+
+Como con random forest vamos seleccionando aleatoriamente distintas variables de entrada a cada uno de los *n* árboles que generamos, sabiendo cuáles de esos árboles han predicho mejor la clase podemos deducir cuáles de esas variables son más importantes o tienen más capacidad predictiva sobre la clase objetivo. Mostramos estos resultados de forma gráfica:
+
+```{r}
+imp <- as.data.frame(modelo.rf$importance)
+imp$name <- row.names(imp)
+```
+
+
+```{r}
+imp %>%
+  ggplot(aes(x=MeanDecreaseGini, y=reorder(name, MeanDecreaseGini))) +
+  geom_bar(stat="identity") +
+  geom_text(aes(label=sprintf("%0.1f", MeanDecreaseGini)), vjust=0.3, hjust=1.2, size=3, color='white') +
+  labs(x='Feature importance', y='Feature')
+```
+
+Vemos cómo las variables que han resultado ser más informativas a la hora de predecir la clase objetivo han sido las de duración y cantidad del préstamo, así como la capacidad económica del solicitante y su edad. También llama la atención que el objeto del préstamo es bastante relevante.
+
+
+## Random forest alternativo
+
+Probamos ahora un nuevo modelo random forest, en el que establecemos la variable mtry a 2. Esta variable especifica el número de variables con las que contará cada uno de los árboles de decisión que se formen de las que tenemos inicialmente, y que serán escogidas de forma aleatoria entre ellas. Estableciendo este parámetro a 2, estaremos creando una gran cantidad de árboles de decisión que serán muy sencillos, ya que sólo contarán con dos variables de entrada cada uno.
+
+```{r}
+set.seed(42)
+modelo.rf2 <- randomForest(x=X_train, y=y_train, importance=TRUE, ntree=50, mtry=2)
+```
+
+Realizamos el mismo análisis de medidas de calidad del modelo que en los casos anteriores.
+
+```{r}
+y_predict.rf2 <- predict( modelo.rf2, X_test, type="class" )
+confusionMatrix(y_predict.rf2, y_test, mode = "prec_recall", positive='TRUE')
+```
+
+
+Podemos observar cómo hemos mejorado todavía un poco más la exactitud del modelo, obteniendo ahora un 81%. Teniendo en cuenta que con un estimador que nos devolviese una constante tendríamos un 70% de exactitud y que con el primer árbol de decisión obteníamos un 73%, podemos ver cómo con diferentes métotos de *ensemble* como random forest y partiendo del mismo modelo base (árboles de decisión), pueden mejorarse mucho los resultados iniciales. Tenemos además un valor de *precision* bastante bueno (76%), pero no así el de *recall*, que se queda en el 50%, un valor prácticamente igual al arbol original. El valor de *F1-score* se ve penalizado por el bajo valor de *recall*, pero aun así conseguimos un 60.4%, el valor más alto de todos los modelos que hemos evaluado.
+
+También resulta curioso y puede parecer contradictorio que haciendo los árboles más sencillos con mtry=2 obtengamos mejores valores que haciendo árboles más complejos. Esto se debe a que, de esta forma estamos regularizando el modelo o, dicho de otra forma, creando un modelo más sencillo que, pese a que pueda comportarse peor a la hora de clasificar las muestras de entrenamiento, lo haga mejor con las de test, ya que generalice mejor ante muestras no vistas anteriormente. Esto ocurre porque, como ya hemos visto, nuestro modelo inicial sufre de **overfitting**.
+
+Representamos ahora la curva ROC y la medida de AUC.
+
+```{r}
+y_predict_prob.rf2 <- predict(modelo.rf2, X_test, type='prob')
+par(pty='s')
+roc_p <- roc(y_test, y_predict_prob.rf2[,2], legacy_axes=TRUE, percent = TRUE, plot = TRUE, 
+             asp =NA, col='red', lwd=3, print.auc = TRUE,
+             xlab = 'Porcentaje falsos positivos', 
+             ylab = 'Porcentaje verdaderos postivios', 
+             xlim = c(100, 0))
+```
+
+Podemos comprobar cómo la curva ROC que tenemos es la mejor que hemos conseguido, y esto se ve representado en el valor de AUC, que sube hasta el 78.1%. 
+
+Mostramos de forma gráfica igual que antes las variables más importantes en la toma de decisión:
+
+```{r}
+imp <- as.data.frame(modelo.rf2$importance)
+imp$name <- row.names(imp)
+```
+
+
+```{r}
+imp %>%
+  ggplot(aes(x=MeanDecreaseGini, y=reorder(name, MeanDecreaseGini))) +
+  geom_bar(stat="identity") +
+  geom_text(aes(label=sprintf("%0.1f", MeanDecreaseGini)), vjust=0.3, hjust=1.2, size=3, color='white') +
+  labs(x='Feature importance', y='Feature')
+```
+
+Obtenemos un resultado muy similar al del modelo anterior, donde las variables que determinan la duración y cantidad del préstamo, así como la capacidad económica del solicitante, su edad y el objeto del préstamo son las más relevantes.
+
+
+******
+# Conclusiones obtenidas
+******
+
+Hemos leído el set de datos que se nos proporciona y hemos hecho un análisis exploratorio sobre los datos y seleccionado las variables que más interesantes nos han parecido para entrenar nuestro modelo. A continuación, hemos dividido el set de datos en dos conjuntos: uno para entrenamiento y otro para test, y el primero de ellos lo hemos utilizado para entrenar varios modelos:
+
+* El primer modelo, un árbol de decisión básico con el algoritmo C50 con el que hemos conseguido unos resultados que no han sido demasiado esperanzadores: la exactitud obtenida es del 73%, pero porque las clases objetivo no están balanceadas, lo que realmente es apenas mejor que un clasificador que prediga siempre una clase constante. Hemos evaluado sus distintas métricas de medida de calidad, la matriz de confusión, y comprobado que tanto *precision* como *recall* tienen valores muy bajos.
+
+Después hemos probado varias mejoras sobre este primer modelo:
+
+* Árbol de decisión C50 con boosting, donde de forma iterativa construimos varios árboles de decisión dando más peso a las muestras que no se han clasificado correctamente en iteraciones anteriores. Este modelo ha mejorado en cualquier métrica el resultado obtenido con el primero.
+
+* Random forest, que consiste en la creación de un conjunto de árboles de decisión, cada uno de ellos con un subconjunto de las variables que tenemos de entrada de forma original, combinando el resultado de todos ellos y obteniendo una clase final por votación de la mayoría. Con este método hemos mejorado sustancialmente el caso original, pero especialmente en lo referente a la precisión, lo cual puede ser especialmente interesante si lo que priorizamos es no categorizar a clientes que realmente vayan a pagar sus préstamos como clientes malos a los que no les concedamos el préstamo. La mejora en este aspecto es muy sustancial, pasando del 50% original a un 70%. Los resultados que hemos obtenido con este modelo son similares a los que hemos obtenido con boosting, y elegiríamos uno u otro dependiendo de qué medida de calidad valorásemos más.
+
+* Random forest tuneado, en el que hemos ajustado el valor del número de variables de entrada de cada árbol simplificado dentro del modelo para obtener un mejor resultado. Con esta modificación hemos mejorado los resultados obtenidos con el random forest sin ajustar en todas las métricas, y tenemos los mejores de todo el set de modelos probados.
+
+Basando nuestra decisión en los modelos probados, por lo tanto, elegiríamos el último de ellos como mejor opción.
+
+El ajuste que hemos realizado en el último modelo ha sido manual, pero en un caso más completo realizarámos una búsqueda automatizada del parámetro o conjunto de parámetros que nos da para un modelo el mejor resultado dada una medida de calidad determinada (*accuracy*, *precision*, *recall*, *F1-score*, *AUC*, etc). A este proceso se le conoce como *hyperparameter tuning* y con él podremos mejorar el comportamiento en evaluación del modelo respecto al modelo con los parámetros especificados por defecto.
+
+Podemos ver cómo con diferentes métotos de *ensemble* como random forest y partiendo del mismo modelo base (árboles de decisión), pueden mejorarse mucho los resultados obtenidos. Cualquiera de estos métodos, eso sí, tiene la desventaja de ser computacionalmente más complejo y lento; en este caso con el conjunto limitado de muestras que tenemos no es importante, pero puede serlo en otros casos.
+
+Finalmente, podemos decir que incluso nuestro mejor modelo no tiene un comportamiento especialmente reseñable y los dos tipos de errores que cometemos nos van a provocar, por un lado, que no demos préstamos a clientes que los vayan a devolver, generando desconfianza en éstos, y por otro que concedamos préstamos a clientes que van a acabar siendo morosos, con la pérdida económica que supone. Para mejorar los resultados, podríamos tomar las siguientes acciones:
+
+* Búsqueda del mejor parámetro en los modelos que tenemos con *hyperparameter tuning*. Esto puede mejorar los resultados obtenidos, pero suele ser más para afinarlos que para mejorar considerablemente éstos.
+
+* Evaluar la inclusión de algunas de las variables que hemos desechado o crear nuevas variables a partir de las actuales que nos puedan aportar mejor información.
+
+* Considerar si se pueden obtener nuevas variables más informativas o una muy superior cantidad de muestras, con las que podamos entrenar mejor el modelo, ya que el número que tenemos es muy limitado.
+
+* Evaluación de otros modelos de clasificación, como podrían ser k-nn, SVM, logistic regression o redes neuronales.
+
+
+Como apunte adicional, hemos hecho una comparativa de modelos utilizando el conjunto de test que hemos separado al principio. Sin embargo, esta manera de proceder no es en realidad correcta y nos hemos quedado sin un conjunto de muestras donde realmente podamos evaluar el comportamiento del modelo una vez seleccionado con muestras no vistas. El motivo es que el conjunto de test lo hemos utilizado para seleccionar el mejor modelo, y hemos podido acabar seleccionando uno porque se comporta mejor para **ese conjunto de muestras de test en concreto**. El conjunto de muestras reservadas para test no debería tenerse en cuenta en ningún momento para realizar ninguna decisión, sino solamente para valorar la calidad final que tendremos del modelo, y sin embargo de esta manera lo utilizamos para seleccionar el mejor modelo. Por ello, podemos acabar con un resultado que acabe teniendo un resultado peor del que nos indica el de las muestras de evaluación. Para solucionar eso, tendríamos dos opciones:
+
+* En lugar de reservar un conjunto de muestras para test, reservar dos conjuntos, uno para evaluación y otro para test. El de evaluación lo utilizaríamos para evaluar cada modelo entrenado, comparar entre ellos y decidir la mejor solución, y el de test para comprobar la calidad del modelo con muestras nunca vistas, ni siquiera en el proceso de selección del modelo. Este método tiene la desventaja de que nos quedamos con menos muestras para el entrenamiento, y esto es especialmente preocupante si tenemos pocas muestras, como es nuestro caso (1000). Además, seguimos evaluando sobre un conjunto fijo de muestras.
+
+* Utilizar el método de cross-validation. Con este método, dividimos las muestras que nos quedan después de retirar las de test en *k* grupos o *folds*. A continuación se selecciona uno de los grupos que se utilizará para evaluar el modelo y el resto se utilizará para entrenar el modelo. Esto se realiza *k* veces, seleccionando cada vez un grupo de muestras como evaluación distinto. La evaluación final del modelos se realizará como el promedio de las *k* evaluaciones con las que hemos acabado. De esta forma, conseguimos no perder datos para el entrenamiento, a costa de tener que entrenar *k* modelos en luagar de uno, por lo que computacionalmente es mucho más costoso. Con este método, además, tenemos la ventaja de que utilizamos todas las muestras como muestras de evaluación en alguno de los *folds*, por lo que no corremos el riesgo de seleccionar un modelo en base a como se comporta con un set de muestas de evaluación concreto.
+
+En la práctica casi siempre elegiremos la segunda de las opciones para no perder muestas salvo que dispongamos de una cantidad muy alta de éstas y el entrenamiento sea computacionalmente muy costoso, así que es también la opción que elegiríamos en este caso.
+
+
+******
+# Bibliografía
+******
+
+
+https://rpubs.com/DavidGS/c50
+
+https://bookdown.org/content/2031/ensambladores-random-forest-parte-ii.html
+
+https://towardsdatascience.com/random-forest-for-feature-importance-ea90852b8fc5
+
+https://cran.r-project.org/web/packages/pROC/pROC.pdf
+
+https://stackoverflow.com/questions/61105697/plotting-roc-problems-with-axes-limits-r-plots
+
+https://stats.stackexchange.com/questions/105760/how-we-can-draw-an-roc-curve-for-decision-trees
+
+https://www.rdocumentation.org/packages/randomForest/versions/4.6-14/topics/randomForest
+
